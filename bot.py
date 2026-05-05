@@ -142,8 +142,7 @@ async def authenticate_user(ctx, code: str):
         'client_secret': CLIENT_SECRET,
         'grant_type': 'authorization_code',
         'code': code,
-        'redirect_uri': "https://parrotgames.free.nf/discord-redirect.html"
-    }
+        'redirect_uri': "https://memberswave.netlify.app/
     r = requests.post('https://discord.com/api/v10/oauth2/token', data=data)
     if r.status_code != 200:
         return await ctx.send(f"❌ Error: {r.json().get('error_description')}")
