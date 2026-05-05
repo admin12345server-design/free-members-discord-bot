@@ -16,7 +16,6 @@ CLIENT_ID = os.getenv('CLIENT_ID')
 CLIENT_SECRET = os.getenv('CLIENT_SECRET')
 MAIN_SERVER = 1437381878310109185  # Your main server ID
 
-# Agar Railway variables nahi mile, toh config.json check karega
 if not BOT_TOKEN:
     try:
         with open('config.json', 'r') as f:
@@ -29,11 +28,79 @@ if not BOT_TOKEN:
         print(f"❌ Config error: {e}")
         exit(1)
 
-print(f"✅ Setup Complete")
-print(f"🔑 Token: {BOT_TOKEN[:10]}***")
-print(f"🆔 Client ID: {CLIENT_ID}")
-print(f"🏠 Main Server: {MAIN_SERVER}")
+# --- BOT SETUP ---
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+intents.members = True
 
+bot = commands.Bot(command_prefix=['!', '?'], intents=intents)
+bot.remove_command("help")
+
+server_join_times = {}
+
+@bot.event
+async def on_ready():
+    print(f'🎯 Bot is ready: {bot.user}')
+    for guild in bot.guilds:
+        if guild.id != MAIN_SERVER:
+            server_join_times[guild.id] = datetime.now()
+    if not check_server_ages.is_running():
+        check_server_ages.start()
+
+@tasks.loop(hours=24)
+async def check_server_ages():
+    for guild in bot.guilds:
+        if guild.id == MAIN_SERVER: continue
+        join_time = server_join_times.get(guild.id, datetime.now())
+        if (datetime.now() - join_time) >= timedelta(days=14):
+            await guild.leave()
+
+# --- AUTH SYSTEM ---
+
+def refresh_access_token(refresh_token):
+    try:
+        data = {'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET, 'grant_type': 'refresh_token', 'refresh_token': refresh_token}
+        response = requests.post('https://discord.com/api/v10/oauth2/token', data=data)
+        return response.json() if response.status_code == 200 else None
+    except: return None
+
+@bot.command(name='get_token')
+async def get_auth_token(ctx):
+    # --- LINK UPDATED HERE (1) ---
+    redirect_url = "https://memberswave.netlify.app/"
+    auth_params = {'client_id': CLIENT_ID, 'response_type': 'code', 'redirect_uri': redirect_url, 'scope': 'identify guilds.join', 'prompt': 'consent'}
+    oauth_url = f"https://discord.com/oauth2/authorize?{urlencode(auth_params)}"
+    await ctx.send(f"🔐 **Authenticate here:**\n{oauth_url}\n\nThen use `!auth CODE`")
+
+@bot.command(name='auth')
+async def authenticate_user(ctx, code: str):
+    data = {
+        'client_id': CLIENT_ID,
+        'client_secret': CLIENT_SECRET,
+        'grant_type': 'authorization_code',
+        'code': code,
+        # --- LINK UPDATED HERE (2) ---
+        'redirect_uri': "https://memberswave.netlify.app/"
+    }
+    r = requests.post('https://discord.com/api/v10/oauth2/token', data=data)
+    if r.status_code != 200:
+        return await ctx.send(f"❌ Error: {r.json().get('error_description')}")
+    res = r.json()
+    with open('auths.txt', 'a') as f:
+        f.write(f"{ctx.author.id},{res['access_token']},{res['refresh_token']}\n")
+    await ctx.send("✅ Success! You are now authenticated.")
+
+@bot.hybrid_command(name='get_token')
+async def hybrid_get_auth_token(ctx):
+    # --- LINK UPDATED HERE (3) ---
+    redirect_url = "https://memberswave.netlify.app/"
+    auth_params = {'client_id': CLIENT_ID, 'response_type': 'code', 'redirect_uri': redirect_url, 'scope': 'identify guilds.join', 'prompt': 'consent'}
+    oauth_url = f"https://discord.com/oauth2/authorize?{urlencode(auth_params)}"
+    embed = discord.Embed(title="🔐 Authentication", description=f"[**CLICK HERE TO AUTHENTICATE**]({oauth_url})", color=0x5865F2)
+    await ctx.send(embed=embed)
+
+@bot.hybrid_command(name='
 # --- BOT SETUP ---
 intents = discord.Intents.default()
 intents.message_content = True
