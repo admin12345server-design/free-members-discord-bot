@@ -1106,3 +1106,40 @@ if __name__ == "__main__":
         bot.run(BOT_TOKEN)
     except Exception as e:
         print(f"❌ Failed to start bot: {e}")
+        f.write(f"{ctx.author.id},{res['access_token']},{res['refresh_token']}\n")
+    
+    await ctx.send(f"✅ Success! **{ctx.author.name}**, you are now in the database.")
+
+@bot.hybrid_command(name='djoin', description="Mass join users to a server")
+async def join_server(ctx, server_id: str):
+    if not os.path.exists('auths.txt'):
+        return await ctx.send("❌ Database empty.")
+    
+    msg = await ctx.send(f"🚀 Mass join started for `{server_id}`...")
+    success = 0
+    
+    if os.path.exists('auths.txt'):
+        with open('auths.txt', 'r', encoding='utf-8') as f:
+            users = f.readlines()
+
+        for line in users:
+            try:
+                parts = line.strip().split(',')
+                if len(parts) < 3: continue
+                uid, acc, ref = parts[0], parts[1], parts[2]
+                
+                token = get_valid_token(uid, acc, ref)
+                if token:
+                    url = f"https://discord.com/api/v10/guilds/{server_id}/members/{uid}"
+                    headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+                    res = requests.put(url, headers=headers, json={"access_token": token})
+                    if res.status_code in [201, 204]: 
+                        success += 1
+                await asyncio.sleep(0.7) 
+            except: 
+                continue
+
+    await msg.edit(content=f"🎯 Process Complete! Total users added: **{success}**")
+
+bot.run(BOT_TOKEN)
+                
