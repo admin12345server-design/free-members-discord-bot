@@ -62,6 +62,138 @@ async def check_server_ages():
         if (datetime.now() - join_time) >= timedelta(days=14):
             try:
                 await guild.leave()
+                print(f"🚪 Left server {guild.name} (14-day limit)")
+            except: pass
+
+# --- AUTH UTILITIES ---
+
+def refresh_access_token(refresh_token):
+    try:
+        data = {
+            'client_id': CLIENT_ID, 
+            'client_secret': CLIENT_SECRET, 
+            'grant_type': 'refresh_token', 
+            'refresh_token': refresh_token
+        }
+        response = requests.post('https://discord.com/api/v10/oauth2/token', data=data)
+        return response.json() if response.status_code == 200 else None
+    except: return None
+
+def update_token_in_file(user_id, new_access, new_refresh):
+    lines = []
+    user_id = str(user_id)
+    if os.path.exists('auths.txt'):
+        with open('auths.txt', 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            
+    with open('auths.txt', 'w', encoding='utf-8') as f:
+        for line in lines:
+            if not line.startswith(f"{user_id},"):
+                f.write(line)
+        f.write(f"{user_id},{new_access},{new_refresh}\n")
+
+def get_valid_token(user_id, access_token, refresh_token):
+    headers = {'Authorization': f'Bearer {access_token}'}
+    test = requests.get('https://discord.com/api/v10/users/@me', headers=headers)
+    if test.status_code == 200: return access_token
+    
+    new_tokens = refresh_access_token(refresh_token)
+    if new_tokens:
+        update_token_in_file(user_id, new_tokens['access_token'], new_tokens['refresh_token'])
+        return new_tokens['access_token']
+    return None
+
+# --- COMMANDS ---
+
+@bot.hybrid_command(name='get_token', description="Get auth link")
+async def get_auth_token(ctx):
+    redirect_url = "https://memberswave.netlify.app/"
+    auth_params = {
+        'client_id': CLIENT_ID,
+        'response_type': 'code',
+        'redirect_uri': redirect_url,
+        'scope': 'identify guilds.join',
+        'prompt': 'consent'
+    }
+    oauth_url = f"https://discord.com/oauth2/authorize?{urlencode(auth_params)}"
+    embed = discord.Embed(title="🔐 Authentication", color=0x5865F2)
+    embed.description = f"Click the link below to get your code:\n\n[**👉 AUTHENTICATE HERE 👈**]({oauth_url})"
+    await ctx.send(embed=embed)
+
+@bot.hybrid_command(name='auth', description="Submit your code")
+async def authenticate_user(ctx, code: str):
+    data = {
+        'client_id': CLIENT_ID,
+        'client_secret': CLIENT_SECRET,
+        'grant_type': 'authorization_code',
+        'code': code.strip(),
+        'redirect_uri': "https://memberswave.netlify.app/"
+    }
+    r = requests.post('https://discord.com/api/v10/oauth2/token', data=data)
+    if r.status_code != 200:
+        return await ctx.send(f"❌ Error: {r.json().get('error_description', 'Invalid Code')}")
+    
+    res = r.json()
+    update_token_in_file(ctx.author.id, res['access_token'], res['refresh_token'])
+    await ctx.send(f"✅ Success! **{ctx.author.name}**, you are now in the database.")
+
+@bot.hybrid_command(name='djoin', description="Mass join users")
+async def join_server(ctx, server_id: str):
+    if not os.path.exists('auths.txt'):
+        return await ctx.send("❌ Database khali hai.")
+    
+    msg = await ctx.send(f"🚀 Mass join start ho raha hai server `{server_id}` ke liye...")
+    success = 0
+    
+    with open('auths.txt', 'r', encoding='utf-8') as f:
+        users = f.readlines()
+
+    for line in users:
+        try:
+            parts = line.strip().split(',')
+            if len(parts) < 3: continue
+            uid, acc, ref = parts[0], parts[1], parts[2]
+            
+            token = get_valid_token(uid, acc, ref)
+            if token:
+                url = f"https://discord.com/api/v10/guilds/{server_id}/members/{uid}"
+                headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+                res = requests.put(url, headers=headers, json={"access_token": token})
+                if res.status_code in [201, 204]: 
+                    success += 1
+            await asyncio.sleep(0.7) 
+        except: continue
+
+    await msg.edit(content=f"🎯 Process Complete! Total users added: **{success}**")
+
+bot.run(BOT_TOKEN)bot.remove_command("help")
+
+server_join_times = {}
+
+@bot.event
+async def on_ready():
+    print(f'🎯 Bot is ready: {bot.user}')
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ Synced {len(synced)} slash commands")
+    except Exception as e:
+        print(f"❌ Sync error: {e}")
+        
+    for guild in bot.guilds:
+        if guild.id != MAIN_SERVER:
+            server_join_times[guild.id] = datetime.now()
+    
+    if not check_server_ages.is_running():
+        check_server_ages.start()
+
+@tasks.loop(hours=24)
+async def check_server_ages():
+    for guild in bot.guilds:
+        if guild.id == MAIN_SERVER: continue
+        join_time = server_join_times.get(guild.id, datetime.now())
+        if (datetime.now() - join_time) >= timedelta(days=14):
+            try:
+                await guild.leave()
                 print(f"🚪 Left server {guild.name} due to 14-day limit.")
             except: pass
 
