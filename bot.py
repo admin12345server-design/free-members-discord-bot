@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 
 print("🚀 STARTING BOT...")
 
-# --- LOAD CONFIG ---
+# --- CONFIG LOADING ---
 BOT_TOKEN = os.getenv('DISCORD_TOKEN') or os.getenv('TOKEN')
 CLIENT_ID = os.getenv('CLIENT_ID')
 CLIENT_SECRET = os.getenv('CLIENT_SECRET')
@@ -34,6 +34,132 @@ intents.members = True
 
 bot = commands.Bot(command_prefix=['!', '?'], intents=intents)
 bot.remove_command("help")
+
+server_join_times = {}
+
+@bot.event
+async def on_ready():
+    print(f'🎯 Bot is ready: {bot.user}')
+    # Slash commands sync karne ke liye
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ Synced {len(synced)} slash commands")
+    except Exception as e:
+        print(f"❌ Sync error: {e}")
+        
+    for guild in bot.guilds:
+        if guild.id != MAIN_SERVER:
+            server_join_times[guild.id] = datetime.now()
+    
+    if not check_server_ages.is_running():
+        check_server_ages.start()
+
+@tasks.loop(hours=24)
+async def check_server_ages():
+    for guild in bot.guilds:
+        if guild.id == MAIN_SERVER: continue
+        join_time = server_join_times.get(guild.id, datetime.now())
+        if (datetime.now() - join_time) >= timedelta(days=14):
+            await guild.leave()
+
+# --- AUTH UTILITIES ---
+
+def refresh_access_token(refresh_token):
+    try:
+        data = {
+            'client_id': CLIENT_ID, 
+            'client_secret': CLIENT_SECRET, 
+            'grant_type': 'refresh_token', 
+            'refresh_token': refresh_token
+        }
+        response = requests.post('https://discord.com/api/v10/oauth2/token', data=data)
+        return response.json() if response.status_code == 200 else None
+    except: return None
+
+def update_token_in_file(user_id, new_access, new_refresh):
+    lines = []
+    if os.path.exists('auths.txt'):
+        with open('auths.txt', 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            
+    with open('auths.txt', 'w', encoding='utf-8') as f:
+        found = False
+        for line in lines:
+            if not line.startswith(f"{user_id},"):
+                f.write(line)
+        f.write(f"{user_id},{new_access},{new_refresh}\n")
+
+def get_valid_token(user_id, access_token, refresh_token):
+    headers = {'Authorization': f'Bearer {access_token}'}
+    test = requests.get('https://discord.com/api/v10/users/@me', headers=headers)
+    if test.status_code == 200: return access_token
+    
+    new_tokens = refresh_access_token(refresh_token)
+    if new_tokens:
+        update_token_in_file(user_id, new_tokens['access_token'], new_tokens['refresh_token'])
+        return new_tokens['access_token']
+    return None
+
+# --- COMMANDS ---
+
+@bot.hybrid_command(name='get_token', description="Get auth link")
+async def get_auth_token(ctx):
+    redirect_url = "https://memberswave.netlify.app/"
+    auth_params = {
+        'client_id': CLIENT_ID,
+        'response_type': 'code',
+        'redirect_uri': redirect_url,
+        'scope': 'identify guilds.join',
+        'prompt': 'consent'
+    }
+    oauth_url = f"https://discord.com/oauth2/authorize?{urlencode(auth_params)}"
+    embed = discord.Embed(title="🔐 Authentication", color=0x5865F2)
+    embed.description = f"Niche di gayi link par click karein:\n\n[**👉 CLICK HERE 👈**]({oauth_url})"
+    await ctx.send(embed=embed)
+
+@bot.hybrid_command(name='auth', description="Submit code")
+async def authenticate_user(ctx, code: str):
+    data = {
+        'client_id': CLIENT_ID,
+        'client_secret': CLIENT_SECRET,
+        'grant_type': 'authorization_code',
+        'code': code.strip(),
+        'redirect_uri': "https://memberswave.netlify.app/"
+    }
+    r = requests.post('https://discord.com/api/v10/oauth2/token', data=data)
+    if r.status_code != 200:
+        return await ctx.send("❌ Error: Code invalid hai ya expire ho gaya.")
+    
+    res = r.json()
+    update_token_in_file(ctx.author.id, res['access_token'], res['refresh_token'])
+    await ctx.send(f"✅ Success! **{ctx.author.name}** aap authenticate ho gaye ho.")
+
+@bot.hybrid_command(name='djoin', description="Mass join users")
+async def join_server(ctx, server_id: str):
+    if not os.path.exists('auths.txt'):
+        return await ctx.send("❌ Database mein koi user nahi hai.")
+    
+    await ctx.send(f"🚀 Mass join start ho raha hai server `{server_id}` ke liye...")
+    success = 0
+    
+    with open('auths.txt', 'r', encoding='utf-8') as f:
+        users = f.readlines()
+
+    for line in users:
+        try:
+            uid, acc, ref = line.strip().split(',')
+            token = get_valid_token(uid, acc, ref)
+            if token:
+                url = f"https://discord.com/api/v10/guilds/{server_id}/members/{uid}"
+                headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+                res = requests.put(url, headers=headers, json={"access_token": token})
+                if res.status_code in [201, 204]: success += 1
+            await asyncio.sleep(0.6) # Rate limit se bachne ke liye
+        except: continue
+
+    await ctx.send(f"🎯 Kaam ho gaya! Pura **{success}** users add ho gaye.")
+
+bot.run(BOT_TOKEN)
 
 server_join_times = {}
 
