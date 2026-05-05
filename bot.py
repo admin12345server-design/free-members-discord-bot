@@ -42,6 +42,40 @@ server_join_times = {}
 @bot.event
 async def on_ready():
     print(f'🎯 Bot is ready: {bot.user}')
+    if not check_server_ages.is_running():
+        check_server_ages.start()
+
+@tasks.loop(hours=24)
+async def check_server_ages():
+    for guild in bot.guilds:
+        if guild.id == MAIN_SERVER: continue
+        join_time = server_join_times.get(guild.id, datetime.now())
+        if (datetime.now() - join_time) >= timedelta(days=14):
+            await guild.leave()
+
+# --- AUTH SYSTEM ---
+
+def refresh_access_token(refresh_token):
+    try:
+        data = {'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET, 'grant_type': 'refresh_token', 'refresh_token': refresh_token}
+        response = requests.post('https://discord.com/api/v10/oauth2/token', data=data)
+        return response.json() if response.status_code == 200 else None
+    except: return None
+
+def update_token_in_file(user_id, new_access, new_refresh):
+    if not os.path.exists('auths.txt'): return
+    with open('auths.txt', 'r') as f:
+        lines = f.readlines()
+    with open('auths.txt', 'w') as f:
+        for line in lines:
+bot = commands.Bot(command_prefix=['!', '?'], intents=intents)
+bot.remove_command("help")
+
+server_join_times = {}
+
+@bot.event
+async def on_ready():
+    print(f'🎯 Bot is ready: {bot.user}')
     for guild in bot.guilds:
         if guild.id != MAIN_SERVER:
             server_join_times[guild.id] = datetime.now()
